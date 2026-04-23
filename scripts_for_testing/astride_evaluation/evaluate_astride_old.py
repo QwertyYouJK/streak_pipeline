@@ -190,10 +190,10 @@ def main():
             show_image_with_streaks(fpath, streak)
 
             # NEW: quality flag for detection (only meaningful when gt_has_streak & detected)
-            # detection_acceptable = ask_yes_no(
-            #     "Judgement: is ASTRiDE's detection acceptable (even if partial)?"
-            # )
-            detection_acceptable = True
+            detection_acceptable = ask_yes_no(
+                "Judgement: is ASTRiDE's detection acceptable (even if partial)?"
+            )
+            # detection_acceptable = True
 
             # --- Update confusion matrix (with extra TP split) ---
             if detection_acceptable:
@@ -215,7 +215,7 @@ def main():
 
             records.append(
                 {
-                    "filepath": str(fpath),
+                    # "filepath": str(fpath),
                     "filename": fpath.name,
                     "num_detected": num_detected,
                     "detection_acceptable": det_acc_val,
@@ -265,7 +265,7 @@ def main():
         writer = csv.DictWriter(
             f,
             fieldnames=[
-                "filepath",
+                # "filepath",
                 "filename",
                 "astride_detected",
                 "num_detected",

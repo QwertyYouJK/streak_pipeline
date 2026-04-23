@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
 """
-astap_astride.py
+astap_astride_updated.py
 
 For each FITS file in ./input:
 - run ASTAP plate solve
 - get WCS from ASTAP's clean .ini solution
-- run ASTRiDE on a blurred temporary FITS
-- filter short detections
+- run the updated ASTRiDE streak detector on a blurred temporary FITS
+- filter short detections using the tuned thresholds from
+  astride_evaluation/evaluate_astride_combined.py
 - merge linked detections using connectivity
-- compute one center per merged streak
+- reject probable border artifacts caused by padded-image detection
+- compute one center per kept merged streak group
 - convert image center and streak center to RA/Dec
 - write CSV report
 
 Usage:
-    python astap_astride.py OUTPUT_CSV
+    python astap_astride_updated.py OUTPUT_CSV
 
 Output:
     out/OUTPUT_CSV, if OUTPUT_CSV is a filename
 
 Notes:
+- The ASTAP/WCS flow is intentionally kept the same as astap_astride.py.
+- The streak-detection flow mirrors
+  astride_evaluation/evaluate_astride_combined.py.
 - If no ASTAP .ini WCS is available, RA/Dec fields are left blank.
-- If ASTRiDE finds two separate streaks, two CSV rows are written
-  with the same file name and same image-center RA/Dec.
+- If no streak groups remain after filtering, one CSV row is still written
+  with blank streak coordinates for that file.
 - Pixel coordinates written to CSV are 0-based Python-style coordinates.
 """
 
-import csv
 import argparse
+import csv
 import os
 import subprocess
 import sys
@@ -55,17 +60,19 @@ ASTAP_CANDIDATES = ["astap", "astap-cli", "astap.exe"]
 ASTRIDE_PARAMS = dict(
     remove_bkg="map",
     bkg_box_size=50,
-    contour_threshold=1.7,
-    min_points=10,
+    contour_threshold=2,
+    min_points=5,
     shape_cut=0.2,
     area_cut=10,
     radius_dev_cut=0.5,
-    connectivity_angle=5.0,
+    connectivity_angle=10.0,
     output_path=None,
 )
 
 BLUR_SIGMA = 0.8
-MIN_LENGTH = 30.0
+MIN_LENGTH = 50.0
+ZERO_ANGLE_TOL_DEG = 0.5
+BORDER_CENTER_MARGIN_PX = 1.0
 
 
 # ----------------------------
@@ -162,7 +169,6 @@ def astap_ini_to_wcs(src: Path):
     Build an Astropy WCS from ASTAP's .ini values only.
     """
     values = read_astap_ini(src)
-    # check if ini file has all WCS keys
     if not astap_ini_has_wcs(values):
         return None
 
@@ -188,7 +194,7 @@ def astap_ini_to_wcs(src: Path):
 
 
 def solve_with_astap(src: Path, astap_cmd: str):
-    rc, _, _ = run_astap(src, astap_cmd)
+    _rc, _stdout, _stderr = run_astap(src, astap_cmd)
 
     wcs = astap_ini_to_wcs(src)
     if wcs is not None:
@@ -203,7 +209,6 @@ def image_center_radec(src: Path, wcs: WCS):
         nx = hdr["NAXIS1"]
         ny = hdr["NAXIS2"]
 
-    # 0-based pixel center for Astropy high-level WCS
     cx = (nx - 1) / 2.0
     cy = (ny - 1) / 2.0
     ra_deg, dec_deg = wcs.pixel_to_world_values(cx, cy)
@@ -221,6 +226,7 @@ def pixel_to_radec(wcs: WCS, x: float, y: float):
 def write_blurred_temp_fits(src: Path, sigma: float):
     data, header = fits.getdata(src, header=True, ignore_missing_end=True)
     img = np.squeeze(np.array(data, dtype=float))
+
     if sigma > 0:
         img = gaussian_filter(img, sigma=sigma)
 
@@ -232,11 +238,18 @@ def write_blurred_temp_fits(src: Path, sigma: float):
     return tmp_path
 
 
+def image_shape(src: Path):
+    data = fits.getdata(src, ignore_missing_end=True)
+    img = np.squeeze(np.array(data, dtype=float))
+    if img.ndim < 2:
+        raise ValueError(f"Expected at least a 2D FITS image, got shape {img.shape}")
+    return img.shape[-2:]
+
+
 def run_astride(src_for_astride: Path):
     streak = Streak(str(src_for_astride), **ASTRIDE_PARAMS)
     streak.detect()
 
-    # Keep only long enough detections
     streak.streaks = [s for s in streak.streaks if s["length"] > MIN_LENGTH]
     return streak
 
@@ -280,15 +293,15 @@ def build_groups(streak):
     return groups, idx_to_streak
 
 
-def merged_group_center(group, idx_to_streak):
+def merged_geometry(group, idx_to_streak):
     """
-    Compute one center for a connected streak group using PCA
-    on all contour points / extreme points.
+    Merge a connected group into one center/endpoints using PCA.
     """
     pts = []
 
     for idx in group:
         s = idx_to_streak[idx]
+
         x = np.asarray(s.get("x", []), dtype=float)
         y = np.asarray(s.get("y", []), dtype=float)
 
@@ -310,7 +323,65 @@ def merged_group_center(group, idx_to_streak):
     center = 0.5 * (ep1 + ep2)
     length = float(np.linalg.norm(ep2 - ep1))
 
-    return float(center[0]), float(center[1]), length
+    return center, ep1, ep2, length
+
+
+def group_records(groups, idx_to_streak):
+    records = []
+
+    for group_number, group in enumerate(groups, start=1):
+        center, ep1, ep2, merged_length = merged_geometry(group, idx_to_streak)
+        raw_lengths = [idx_to_streak[idx]["length"] for idx in group]
+        slope_angles = [idx_to_streak[idx]["slope_angle"] for idx in group]
+
+        records.append(
+            {
+                "group_number": group_number,
+                "component_indices": ";".join(str(idx) for idx in group),
+                "num_components": len(group),
+                "center_x": float(center[0]),
+                "center_y": float(center[1]),
+                "endpoint1_x": float(ep1[0]),
+                "endpoint1_y": float(ep1[1]),
+                "endpoint2_x": float(ep2[0]),
+                "endpoint2_y": float(ep2[1]),
+                "merged_length": merged_length,
+                "component_length_sum": float(np.sum(raw_lengths)),
+                "mean_slope_angle": float(np.mean(slope_angles)),
+            }
+        )
+
+    return records
+
+
+def is_probable_border_artifact(rec, img_shape):
+    height, width = img_shape
+    max_x = width - 1
+    max_y = height - 1
+
+    near_zero_angle = abs(rec["mean_slope_angle"]) <= ZERO_ANGLE_TOL_DEG
+    near_border = (
+        rec["center_x"] <= BORDER_CENTER_MARGIN_PX
+        or rec["center_x"] >= max_x - BORDER_CENTER_MARGIN_PX
+        or rec["center_y"] <= BORDER_CENTER_MARGIN_PX
+        or rec["center_y"] >= max_y - BORDER_CENTER_MARGIN_PX
+    )
+
+    return near_zero_angle and near_border
+
+
+def filter_border_artifacts(groups, idx_to_streak, img_shape):
+    grouped = group_records(groups, idx_to_streak)
+    kept_groups = []
+    rejected_records = []
+
+    for group, rec in zip(groups, grouped):
+        if is_probable_border_artifact(rec, img_shape):
+            rejected_records.append(rec)
+        else:
+            kept_groups.append(group)
+
+    return kept_groups, group_records(kept_groups, idx_to_streak), rejected_records
 
 
 # ----------------------------
@@ -318,7 +389,7 @@ def merged_group_center(group, idx_to_streak):
 # ----------------------------
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run ASTAP and ASTRiDE on FITS files and write a CSV report."
+        description="Run ASTAP and the updated ASTRiDE pipeline on FITS files."
     )
     parser.add_argument(
         "output_csv",
@@ -338,7 +409,6 @@ def parse_args():
 def main():
     report_csv = parse_args()
 
-    # create output directory if it doesn't exist
     report_csv.parent.mkdir(parents=True, exist_ok=True)
 
     astap_cmd = find_astap()
@@ -356,7 +426,6 @@ def main():
     for i, src in enumerate(files, start=1):
         print(f"[{i}/{len(files)}] {src.name}")
 
-        # ASTAP solve
         wcs, astap_status = solve_with_astap(src, astap_cmd)
 
         center_x_px = center_y_px = None
@@ -366,38 +435,50 @@ def main():
                 image_center_radec(src, wcs)
             )
 
-        # ASTRiDE detect on blurred temp copy
+        print(f" Solved image center (RA/Dec deg): {center_ra_deg}, {center_dec_deg}")
+
         temp_fits = write_blurred_temp_fits(src, BLUR_SIGMA)
         try:
             streak = run_astride(temp_fits)
         finally:
             temp_fits.unlink(missing_ok=True)
 
-        if not streak.streaks:
+        if streak.streaks:
+            groups, idx_to_streak = build_groups(streak)
+            raw_group_count = len(groups)
+            groups, grouped_records, rejected_records = filter_border_artifacts(
+                groups,
+                idx_to_streak,
+                image_shape(src),
+            )
+
+            # print(
+            #     "  raw_components="
+            #     f"{len(streak.streaks)} raw_groups={raw_group_count} "
+            #     f"kept_groups={len(grouped_records)} rejected_border_groups="
+            #     f"{len(rejected_records)}"
+            # )
+        else:
+            grouped_records = []
+
+        if not grouped_records:
             rows.append(
                 {
                     "file": src.name,
                     "astap_status": astap_status,
-                    # "image_center_x_px": center_x_px,
-                    # "image_center_y_px": center_y_px,
                     "image_center_ra_deg": center_ra_deg,
                     "image_center_dec_deg": center_dec_deg,
-                    # "streak_group": "",
-                    # "n_segments_in_group": 0,
-                    # "segment_indices": "",
                     "streak_center_x_px": "",
                     "streak_center_y_px": "",
                     "streak_center_ra_deg": "",
                     "streak_center_dec_deg": "",
-                    # "merged_streak_length_px": "",
                 }
             )
             continue
 
-        groups, idx_to_streak = build_groups(streak)
-
-        for gi, group in enumerate(groups, start=1):
-            sx, sy, merged_len = merged_group_center(group, idx_to_streak)
+        for rec in grouped_records:
+            sx = rec["center_x"]
+            sy = rec["center_y"]
 
             if wcs is not None:
                 sra, sdec = pixel_to_radec(wcs, sx, sy)
@@ -408,18 +489,12 @@ def main():
                 {
                     "file": src.name,
                     "astap_status": astap_status,
-                    # "image_center_x_px": center_x_px,
-                    # "image_center_y_px": center_y_px,
                     "image_center_ra_deg": center_ra_deg,
                     "image_center_dec_deg": center_dec_deg,
-                    # "streak_group": gi,
-                    # "n_segments_in_group": len(group),
-                    # "segment_indices": ",".join(str(x) for x in group),
                     "streak_center_x_px": sx,
                     "streak_center_y_px": sy,
                     "streak_center_ra_deg": sra,
                     "streak_center_dec_deg": sdec,
-                    # "merged_streak_length_px": merged_len,
                 }
             )
 
@@ -429,18 +504,12 @@ def main():
             fieldnames=[
                 "file",
                 "astap_status",
-                # "image_center_x_px",
-                # "image_center_y_px",
                 "image_center_ra_deg",
                 "image_center_dec_deg",
-                # "streak_group",
-                # "n_segments_in_group",
-                # "segment_indices",
                 "streak_center_x_px",
                 "streak_center_y_px",
                 "streak_center_ra_deg",
                 "streak_center_dec_deg",
-                # "merged_streak_length_px",
             ],
         )
         writer.writeheader()

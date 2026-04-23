@@ -22,6 +22,12 @@ from scipy.ndimage import gaussian_filter
 from astropy.io import fits
 from astride import Streak
 
+import astride
+import inspect
+
+print(sys.executable)
+print(astride.__file__)
+print(inspect.getfile(Streak))
 
 # ----------------------------
 # Settings
@@ -29,17 +35,17 @@ from astride import Streak
 PARAMS = dict(
     remove_bkg="map",
     bkg_box_size=50,
-    contour_threshold=0.9,
+    contour_threshold=1.0,
     min_points=10,
     shape_cut=0.2,
     area_cut=10,
-    radius_dev_cut=0.45,
+    radius_dev_cut=0.5,
     connectivity_angle=10.0,
     output_path=None,
 )
 
-BLUR_SIGMA = 0.8
-MIN_LENGTH = 50
+BLUR_SIGMA = 0.6
+MIN_LENGTH = 30
 
 
 def find_input_files(input_dir: Path):
@@ -190,6 +196,8 @@ def show_fit(fpath: Path):
 
 
 def main():
+    streak_count = 0
+
     input_dir = (
         Path(sys.argv[1]).expanduser().resolve()
         if len(sys.argv) > 1
@@ -220,9 +228,10 @@ def main():
 
             if not streak.streaks:
                 print("No streaks kept after filtering.")
-                show_result(fpath, streak)
+                # show_result(fpath, streak)
                 continue
 
+            streak_count = streak_count + 1
             print(f"Kept {len(streak.streaks)} streak(s):")
             for s in streak.streaks:
                 print(
@@ -244,6 +253,7 @@ def main():
 
             show_result(fpath, streak)
 
+        print(f"Total streak images {streak_count}")
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
 
