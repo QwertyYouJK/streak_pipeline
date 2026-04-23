@@ -24,6 +24,7 @@ Notes:
 - The ASTAP/WCS flow is intentionally kept the same as astap_astride.py.
 - The streak-detection flow mirrors
   astride_evaluation/evaluate_astride_combined.py.
+- The CSV includes per-file timing columns for the major pipeline stages.
 - If no ASTAP .ini WCS is available, RA/Dec fields are left blank.
 - If no streak groups remain after filtering, one CSV row is still written
   with blank streak coordinates for that file.
@@ -37,7 +38,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from time import perf_counter
 
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -54,7 +57,7 @@ from astride import Streak
 INPUT_DIR = Path("input")
 OUT_DIR = Path("out")
 
-ASTAP_TIMEOUT = 180
+ASTAP_TIMEOUT = 1000
 ASTAP_CANDIDATES = ["astap", "astap-cli", "astap.exe"]
 
 ASTRIDE_PARAMS = dict(
@@ -73,6 +76,21 @@ BLUR_SIGMA = 0.8
 MIN_LENGTH = 50.0
 ZERO_ANGLE_TOL_DEG = 0.5
 BORDER_CENTER_MARGIN_PX = 1.0
+
+CSV_FIELDNAMES = [
+    "file",
+    "astap_status",
+    "image_center_ra_deg",
+    "image_center_dec_deg",
+    "streak_center_x_px",
+    "streak_center_y_px",
+    "streak_center_ra_deg",
+    "streak_center_dec_deg",
+    "astap_solve_seconds",
+    "center_radec_seconds",
+    "astride_with_blur_seconds",
+    "group_and_row_seconds",
+]
 
 
 # ----------------------------
@@ -165,9 +183,7 @@ def astap_float(values, key):
 
 
 def astap_ini_to_wcs(src: Path):
-    """
-    Build an Astropy WCS from ASTAP's .ini values only.
-    """
+    # Build an Astropy WCS from ASTAP's .ini values only.
     values = read_astap_ini(src)
     if not astap_ini_has_wcs(values):
         return None
@@ -255,10 +271,7 @@ def run_astride(src_for_astride: Path):
 
 
 def build_groups(streak):
-    """
-    Build connected groups from ASTRiDE connectivity.
-    Treat connectivity as undirected.
-    """
+    # Build connected groups from ASTRiDE connectivity
     idx_to_streak = {s["index"]: s for s in streak.streaks}
     adj = {idx: set() for idx in idx_to_streak}
 
@@ -294,9 +307,7 @@ def build_groups(streak):
 
 
 def merged_geometry(group, idx_to_streak):
-    """
-    Merge a connected group into one center/endpoints using PCA.
-    """
+    # Merge a connected group into one center/endpoints
     pts = []
 
     for idx in group:
@@ -384,6 +395,19 @@ def filter_border_artifacts(groups, idx_to_streak, img_shape):
     return kept_groups, group_records(kept_groups, idx_to_streak), rejected_records
 
 
+def show_image_only(fpath: Path):
+    data = fits.getdata(fpath, ignore_missing_end=True)
+    img = np.squeeze(np.array(data, dtype=float))
+
+    vmin, vmax = np.percentile(img, [5, 99.7])
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    ax.imshow(img, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+    ax.set_title(f"{fpath.name} - no kept detections")
+    plt.tight_layout()
+    plt.show()
+
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -407,6 +431,7 @@ def parse_args():
 
 
 def main():
+    program_start = perf_counter()
     report_csv = parse_args()
 
     report_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -426,23 +451,34 @@ def main():
     for i, src in enumerate(files, start=1):
         print(f"[{i}/{len(files)}] {src.name}")
 
+        astap_start = perf_counter()
         wcs, astap_status = solve_with_astap(src, astap_cmd)
+        astap_solve_seconds = perf_counter() - astap_start
 
         center_x_px = center_y_px = None
         center_ra_deg = center_dec_deg = None
+        center_radec_seconds = None
         if wcs is not None:
+            center_start = perf_counter()
             center_x_px, center_y_px, center_ra_deg, center_dec_deg = (
                 image_center_radec(src, wcs)
             )
+            center_radec_seconds = perf_counter() - center_start
 
         print(f" Solved image center (RA/Dec deg): {center_ra_deg}, {center_dec_deg}")
 
+        astride_start = perf_counter()
+        show_image_only(src)
         temp_fits = write_blurred_temp_fits(src, BLUR_SIGMA)
+        show_image_only(temp_fits)
         try:
             streak = run_astride(temp_fits)
         finally:
             temp_fits.unlink(missing_ok=True)
+        astride_with_blur_seconds = perf_counter() - astride_start
 
+        row_start = len(rows)
+        group_and_row_start = perf_counter()
         if streak.streaks:
             groups, idx_to_streak = build_groups(streak)
             raw_group_count = len(groups)
@@ -474,48 +510,55 @@ def main():
                     "streak_center_dec_deg": "",
                 }
             )
-            continue
+        else:
+            for rec in grouped_records:
+                sx = rec["center_x"]
+                sy = rec["center_y"]
 
-        for rec in grouped_records:
-            sx = rec["center_x"]
-            sy = rec["center_y"]
+                if wcs is not None:
+                    sra, sdec = pixel_to_radec(wcs, sx, sy)
+                else:
+                    sra = sdec = None
 
-            if wcs is not None:
-                sra, sdec = pixel_to_radec(wcs, sx, sy)
-            else:
-                sra = sdec = None
+                rows.append(
+                    {
+                        "file": src.name,
+                        "astap_status": astap_status,
+                        "image_center_ra_deg": center_ra_deg,
+                        "image_center_dec_deg": center_dec_deg,
+                        "streak_center_x_px": sx,
+                        "streak_center_y_px": sy,
+                        "streak_center_ra_deg": sra,
+                        "streak_center_dec_deg": sdec,
+                    }
+                )
 
-            rows.append(
-                {
-                    "file": src.name,
-                    "astap_status": astap_status,
-                    "image_center_ra_deg": center_ra_deg,
-                    "image_center_dec_deg": center_dec_deg,
-                    "streak_center_x_px": sx,
-                    "streak_center_y_px": sy,
-                    "streak_center_ra_deg": sra,
-                    "streak_center_dec_deg": sdec,
-                }
-            )
+        group_and_row_seconds = perf_counter() - group_and_row_start
+        # for row in rows[row_start:]:
+        #     row["astap_solve_seconds"] = astap_solve_seconds
+        #     row["center_radec_seconds"] = center_radec_seconds
+        #     row["astride_with_blur_seconds"] = astride_with_blur_seconds
+        #     row["group_and_row_seconds"] = group_and_row_seconds
+
+        # print(
+        #     " Timing (s): "
+        #     f"ASTAP={astap_solve_seconds:.6f}, "
+        #     f"center={center_radec_seconds or 0.0:.6f}, "
+        #     f"ASTRiDE+blur={astride_with_blur_seconds:.6f}, "
+        #     f"group+row={group_and_row_seconds:.6f}"
+        # )
 
     with report_csv.open("w", newline="") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=[
-                "file",
-                "astap_status",
-                "image_center_ra_deg",
-                "image_center_dec_deg",
-                "streak_center_x_px",
-                "streak_center_y_px",
-                "streak_center_ra_deg",
-                "streak_center_dec_deg",
-            ],
+            fieldnames=CSV_FIELDNAMES,
         )
         writer.writeheader()
         writer.writerows(rows)
 
+    program_total_seconds = perf_counter() - program_start
     print(f"\nDone. Wrote CSV: {report_csv.resolve()}")
+    print(f"Total runtime: {program_total_seconds:.6f} s")
 
 
 if __name__ == "__main__":
