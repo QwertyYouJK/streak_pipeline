@@ -1,3 +1,5 @@
 venv/
 .fits
 .fit
+__pycache__/
+.vscode/
