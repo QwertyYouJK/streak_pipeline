@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-astap_astride_updated.py
+pipeline.py
 
 For each FITS file in ./input:
 - run ASTAP plate solve
@@ -15,7 +15,7 @@ For each FITS file in ./input:
 - write CSV report
 
 Usage:
-    python astap_astride_updated.py OUTPUT_CSV
+    python pipeline.py OUTPUT_CSV
 
 Output:
     out/OUTPUT_CSV, if OUTPUT_CSV is a filename
