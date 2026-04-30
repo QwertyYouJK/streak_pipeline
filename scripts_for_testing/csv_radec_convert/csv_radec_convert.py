@@ -1,3 +1,6 @@
+# Python script to convert ra_center and dec_center columns from h:m:s / d:m:s format into degrees in CSV files.
+# Usage: python csv_radec_convert.py
+
 from __future__ import annotations
 
 import argparse
@@ -57,7 +60,9 @@ def convert_file(input_path: Path, output_dir: Path) -> Path:
         missing_columns = {"ra_center", "dec_center"} - set(fieldnames)
         if missing_columns:
             missing = ", ".join(sorted(missing_columns))
-            raise KeyError(f"{input_path.name} is missing required column(s): {missing}")
+            raise KeyError(
+                f"{input_path.name} is missing required column(s): {missing}"
+            )
 
         with output_path.open("w", newline="", encoding="utf-8") as outfile:
             writer = csv.writer(outfile)

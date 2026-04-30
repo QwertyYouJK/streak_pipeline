@@ -1,5 +1,10 @@
 venv/
+.venv/
 .fits
 .fit
 __pycache__/
 .vscode/
+*.egg-info/
+build/
+dist/
+*:Zone.Identifier

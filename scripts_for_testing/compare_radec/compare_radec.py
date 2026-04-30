@@ -1,3 +1,6 @@
+# Python script to compare RA/Dec from FITS metadata with propagated RA/Dec from user-provided TLEs.
+# Usage: python compare_radec.py
+
 import csv
 from pathlib import Path
 
@@ -14,7 +17,9 @@ ts = load.timescale()
 
 
 def find_fits_files():
-    return sorted(path for path in INPUT_DIR.rglob("*") if path.suffix.lower() in FITS_SUFFIXES)
+    return sorted(
+        path for path in INPUT_DIR.rglob("*") if path.suffix.lower() in FITS_SUFFIXES
+    )
 
 
 def read_fits_metadata(fits_path):

@@ -1,25 +1,12 @@
 #!/usr/bin/env python3
 """
-Combined ASTRiDE evaluator.
-
-This script uses the newer detection pipeline from evaluate_astride.py:
-- Gaussian blur into a temporary FITS file before detection
-- tuned ASTRiDE parameters
-- minimum length filtering
-- connectivity grouping
-- merged geometry for linked streak pieces
-
-It also adds the interactive review/reporting flow from evaluate_astride_old.py:
-- show each image with detected streak contours
-- ask whether each detected streak/group is correct
-- ask how many real streaks were missed
-- count TP, FP, and FN
-- write one CSV row per detected or missed streak
+Streak detection performance evaluation script for ASTRiDE.
+This script runs ASTRiDE on a set of FITS images and outputs detected streaks.
+User can interactively label each detected streak as TP/FP and report any missed streaks as FN.
+At the end, a summary report is printed and a CSV file is written with detailed records.
 
 Usage:
-    python evaluate_astride_combined.py
-    python evaluate_astride_combined.py /path/to/input_dir
-    python evaluate_astride_combined.py /path/to/input_dir --output report.csv
+    python evaluate_astride.py
 """
 
 import argparse

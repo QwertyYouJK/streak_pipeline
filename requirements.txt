@@ -1,0 +1,8 @@
+# Direct dependencies used by solve_pipeline.
+numpy<2
+scipy
+matplotlib
+astropy
+
+# Install the modified ASTRiDE bundled with this repository.
+-e ./ASTRiDE-Modified

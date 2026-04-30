@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-astap_astride_updated.py
+pipeline.py
 
 For each FITS file in ./input:
 - run ASTAP plate solve
@@ -15,7 +15,7 @@ For each FITS file in ./input:
 - write CSV report
 
 Usage:
-    python astap_astride_updated.py OUTPUT_CSV
+    python pipeline.py OUTPUT_CSV
 
 Output:
     out/OUTPUT_CSV, if OUTPUT_CSV is a filename
@@ -468,9 +468,9 @@ def main():
         print(f" Solved image center (RA/Dec deg): {center_ra_deg}, {center_dec_deg}")
 
         astride_start = perf_counter()
-        show_image_only(src)
+        # show_image_only(src)
         temp_fits = write_blurred_temp_fits(src, BLUR_SIGMA)
-        show_image_only(temp_fits)
+        # show_image_only(temp_fits)
         try:
             streak = run_astride(temp_fits)
         finally:

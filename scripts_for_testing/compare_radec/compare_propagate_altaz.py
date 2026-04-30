@@ -1,3 +1,6 @@
+# Python script to compare RA/Dec from FITS metadata with propagated Alt/Az from user-provided TLEs.
+# Usage: python compare_propagate_altaz.py
+
 from sgp4.api import Satrec, SGP4_ERRORS
 from astropy.time import Time
 from astropy import units as u
