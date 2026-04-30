@@ -11,8 +11,6 @@ Pipeline for plate-solving FITS images with ASTAP, detecting streaks with a modi
 ```bash
 git clone <repo-url>
 cd streak_pipeline
-python3 -m venv .venv
-source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 ```
