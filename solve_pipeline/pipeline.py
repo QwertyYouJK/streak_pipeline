@@ -21,9 +21,6 @@ Output:
     out/OUTPUT_CSV, if OUTPUT_CSV is a filename
 
 Notes:
-- The ASTAP/WCS flow is intentionally kept the same as astap_astride.py.
-- The streak-detection flow mirrors
-  astride_evaluation/evaluate_astride_combined.py.
 - The CSV includes per-file timing columns for the major pipeline stages.
 - If no ASTAP .ini WCS is available, RA/Dec fields are left blank.
 - If no streak groups remain after filtering, one CSV row is still written
