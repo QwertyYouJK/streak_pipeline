@@ -83,10 +83,10 @@ CSV_FIELDNAMES = [
     "streak_center_y_px",
     "streak_center_ra_deg",
     "streak_center_dec_deg",
-    "astap_solve_seconds",
-    "center_radec_seconds",
-    "astride_with_blur_seconds",
-    "group_and_row_seconds",
+    # "astap_solve_seconds",
+    # "center_radec_seconds",
+    # "astride_with_blur_seconds",
+    # "group_and_row_seconds",
 ]
 
 
